@@ -1,11 +1,14 @@
 import ctypes
 import json
-import os
 import sys
 import time
 import traceback
 
 from quickres.monitors import run_elevated_worker_op
+
+GUARD_REASON_NO_COMMAND = "no_command"
+GUARD_REASON_UNREADABLE_COMMAND = "unreadable_command"
+GUARD_REASON_INVALID_ACTION = "invalid_action"
 
 
 def _run_elevated_helper(argv) -> int:
@@ -87,23 +90,58 @@ def _run_elevated_helper(argv) -> int:
     # only keep the already-applied disable or re-enable these exact ids.
     deadline = time.monotonic() + args.guard_timeout_s
     action = None
+    last_reason = GUARD_REASON_NO_COMMAND
     while time.monotonic() < deadline:
         try:
-            if os.path.exists(args.guard_command_file):
-                with open(args.guard_command_file, "r", encoding="utf-8") as f:
-                    command = json.load(f)
-                requested = command.get("action") if isinstance(command, dict) else None
-                if requested in {"keep", "revert"}:
-                    action = requested
-                    break
-        except (OSError, ValueError, json.JSONDecodeError):
-            # A partially-written/malformed command is ignored; timeout
-            # remains the fail-safe and will auto-revert.
-            pass
+            with open(args.guard_command_file, "r", encoding="utf-8") as f:
+                command = json.load(f)
+        except FileNotFoundError:
+            last_reason = GUARD_REASON_NO_COMMAND
+        except Exception:
+            # Deliberately catches every exception, not just the
+            # expected (OSError, ValueError, json.JSONDecodeError):
+            # this is a fail-safe boundary that must never let an
+            # unusual command file (a permission/sharing-violation
+            # read racing the atomic replace in config.write_json_atomic,
+            # or pathological JSON like deep nesting raising
+            # RecursionError) crash this still-elevated helper before
+            # it can auto-revert. Any such read is simply ignored and
+            # the timeout remains the fail-safe.
+            last_reason = GUARD_REASON_UNREADABLE_COMMAND
+        else:
+            # A tuple, not a set: an "action" that is a list/dict (valid
+            # JSON, just not a string) then compares by equality instead
+            # of needing `requested` to be hashable, so it cannot crash
+            # with an uncaught TypeError.
+            requested = command.get("action") if isinstance(command, dict) else None
+            if requested in ("keep", "revert"):
+                action = requested
+                break
+            last_reason = GUARD_REASON_INVALID_ACTION
         time.sleep(0.05)
 
-    action = action or "auto_revert"
-    completion = {"action": action, "results": []}
+    if action is None:
+        action = "auto_revert"
+        # auto_revert fires for three different causes that otherwise look
+        # identical from the result file alone: no command file present on
+        # the most recent poll, an unreadable/corrupt read on that poll,
+        # or a well-formed read that was not a recognized keep/revert
+        # action (including a missing or wrong-typed "action" field).
+        # last_reason reflects only the most recent poll outcome, not
+        # the first failure ever seen, so a transient early glitch cannot
+        # mislabel a window that later settled into a different state.
+        log_msg(f"Guard window expired without a valid keep/revert command (reason={last_reason}); auto-reverting")
+
+    # "reason" is always present (None when it does not apply), matching
+    # the convention this codebase already uses for always-present
+    # classification fields (e.g. monitors.py OUTCOME_* as a required
+    # tuple element) rather than a key a caller could forget to guard
+    # with action == "auto_revert" before reading.
+    completion = {
+        "action": action,
+        "reason": last_reason if action == "auto_revert" else None,
+        "results": [],
+    }
     if action != "keep":
         for instance_id in args.instance_id:
             try:
