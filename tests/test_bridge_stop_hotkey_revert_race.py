@@ -11,7 +11,7 @@ threads, with no ordering guarantee over which one wins.
 Fix: `_stop_hotkey_impl` now calls `toggle.stop()` (which unregisters the
 hotkey and joins the listener thread -- so it does not return until any
 message the worker thread was already processing, including an in-flight
-`_toggle()` call, has fully finished) BEFORE reading `is_stretched` or
+`_toggle()` call, has fully finished) BEFORE making the restore decision or
 calling the revert's `display.set_resolution`. This closes the race: by
 the time the revert call runs, no hotkey press can still be in flight and
 no new one can be dispatched (the hotkey is unregistered).
@@ -46,13 +46,15 @@ class _JoinAwareFakeToggle:
 
     def __init__(self, press_in_progress: threading.Event):
         self.native_res = (1920, 1080)
-        self._is_stretched = True
+        self.stretched_res = (1440, 1080)
+        # Armed from the native resolution. Paired with the
+        # get_current_resolution stub below (reporting the stretched
+        # resolution), this makes _stop_hotkey_impl actually perform its
+        # restore -- without which this test would pass vacuously, never
+        # reaching the set_resolution call whose overlap it exists to detect.
+        self.entry_res = (1920, 1080)
         self._press_in_progress = press_in_progress
         self.stop_called = threading.Event()
-
-    @property
-    def is_stretched(self):
-        return self._is_stretched
 
     def stop(self):
         self.stop_called.set()
@@ -89,6 +91,10 @@ class TestStopHotkeyImplDoesNotRaceAConcurrentHotkeyPress:
 
         monkeypatch.setattr(
             "quickres.webview.bridge.display.set_resolution", fake_revert_set_resolution
+        )
+        monkeypatch.setattr(
+            "quickres.webview.bridge.display.get_current_resolution",
+            lambda: (1440, 1080),
         )
 
         toggle = _JoinAwareFakeToggle(press_in_progress)

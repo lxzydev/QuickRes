@@ -765,8 +765,8 @@ class Api:
         it; `_on_closing` propagates it same as any other exception during
         window teardown.
 
-        `toggle.stop()` now runs BEFORE the `is_stretched` read and the
-        revert call, not after. With the old read-then-revert-then-stop
+        `toggle.stop()` now runs BEFORE the restore decision and the revert
+        call, not after. With the old read-then-revert-then-stop
         order, the hotkey stayed registered for the entire duration of the
         revert call: a physical press landing in that window dispatched
         WM_HOTKEY on the still-live listener thread, which ran
@@ -779,8 +779,13 @@ class Api:
         (including an in-flight `_toggle()` call queued right before
         WM_QUIT takes effect) -- so by the time `stop()` returns, no press
         can still be in flight and no new one can be dispatched, and the
-        `is_stretched` read that follows is both stable and safe to act on
-        without racing a concurrent toggle.
+        current-resolution read that follows is both stable and safe to act
+        on without racing a concurrent toggle.
+
+        What gets restored is `HotkeyToggle.entry_res` (the resolution the
+        user was on when the hotkey was armed), not `native_res` -- see
+        `_restore_entry_resolution` for why the previous `is_stretched`/
+        `native_res` pairing changed the resolution to the wrong one.
         """
         with _LockAcquireGuard.bounded(self._hotkey_lock, _HOTKEY_STOP_LOCK_TIMEOUT_S) as guard:
             if not guard.acquired:
@@ -798,12 +803,62 @@ class Api:
                     )
                 self._hotkey_toggle = None
                 self._hotkey_running = False
-                if toggle.is_stretched:
-                    ok, message = display.set_resolution(*toggle.native_res)
-                    if not ok:
-                        raise RuntimeError(message)
+                self._restore_entry_resolution(toggle)
             else:
                 self._hotkey_running = False
+
+    def _restore_entry_resolution(self, toggle):
+        """Put the display back to the resolution the user was on when the
+        hotkey was armed (`HotkeyToggle.entry_res`).
+
+        This used to be `if toggle.is_stretched: set_resolution(*native_res)`,
+        which changed the resolution on the strength of an in-memory flag
+        seeded to `False` and never checked against the display. Two ways that
+        went wrong, and they compounded:
+
+        * Arming the hotkey while already on `stretched_res` made the first
+          press a visible no-op and inverted the flag relative to reality (now
+          fixed in `HotkeyToggle._toggle`, which reads the current mode).
+        * `native_res`/`stretched_res` are user-editable fields that
+          `panel.html`'s `applyHotkeyDefaults` pre-fills from whatever
+          resolution is active on first launch, so a user who first opened
+          QuickRes while stretched has them the wrong way round in
+          `config.json`. Applying `native_res` then threw the display TO the
+          stretched resolution on close -- the exact opposite of the intent.
+
+        Restoring the observed entry resolution is correct regardless of how
+        those two fields are labelled, which is why the decision is made here
+        rather than from `is_stretched`.
+
+        Only a resolution this toggle itself applied is undone: if the current
+        mode is neither `native_res` nor `stretched_res`, something else set it
+        (a game, another tool, the user via the panel) and shutdown leaves it
+        alone instead of stomping on it. A `None` `entry_res` (the display
+        could not be read at `start()`) likewise means there is nothing known
+        to restore.
+
+        Per this class's naming convention (see the Concurrency model section
+        of the class docstring), the absence of an `_under_lock` suffix means
+        the CALLER must already hold the relevant lock -- here
+        `self._hotkey_lock`, asserted below. It must also be called only
+        AFTER `toggle.stop()` has returned, so no hotkey press can still be
+        in flight issuing its own concurrent `ChangeDisplaySettingsW` -- see
+        `_stop_hotkey_impl`'s docstring for why that ordering matters. A
+        failed restore raises, so it is never reported as a clean stop.
+        """
+        assert self._hotkey_lock.locked()
+        entry_res = toggle.entry_res
+        if entry_res is None:
+            return
+        current_res = display.get_current_resolution()
+        if current_res is None or tuple(current_res) == tuple(entry_res):
+            return
+        applied_by_toggle = {tuple(toggle.native_res), tuple(toggle.stretched_res)}
+        if tuple(current_res) not in applied_by_toggle:
+            return
+        ok, message = display.set_resolution(*entry_res)
+        if not ok:
+            raise RuntimeError(message)
 
     @bridge_op()
     def stop_hotkey(self):

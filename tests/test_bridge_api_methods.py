@@ -358,7 +358,10 @@ class TestHotkeyConcurrency:
         class FakeToggle:
             def __init__(self, key_name, native_res, stretched_res, on_status):
                 self.native_res = native_res
-                self.is_stretched = True  # simulate currently stretched
+                self.stretched_res = stretched_res
+                # Armed from the native resolution -- what _stop_hotkey_impl
+                # now restores, instead of inferring a target from a flag.
+                self.entry_res = native_res
 
             def start(self):
                 calls.append("start")
@@ -367,6 +370,11 @@ class TestHotkeyConcurrency:
                 calls.append("stop")
 
         monkeypatch.setattr("quickres.webview.bridge.HotkeyToggle", FakeToggle)
+        # Simulate the display having been left on the stretched resolution.
+        monkeypatch.setattr(
+            "quickres.webview.bridge.display.get_current_resolution",
+            lambda: (1440, 1080),
+        )
         monkeypatch.setattr(
             "quickres.webview.bridge.display.set_resolution",
             lambda w, h: (calls.append(("revert", w, h)), (True, "reverted"))[1],
