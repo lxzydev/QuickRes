@@ -526,6 +526,7 @@ class Api:
         self._hotkey_lock = threading.Lock()
         self._hotkey_toggle = None
         self._hotkey_running = False
+        self._hotkey_restore_pending = False
         # The download/verification phase of an update runs independently
         # from the UI thread.  Replacement still goes through this Api so
         # the normal monitor and hotkey safety hand-off is preserved.
@@ -589,6 +590,7 @@ class Api:
                 "native_res": cfg.get("native_res", ""),
                 "stretched_res": cfg.get("stretched_res", ""),
                 "running": self._hotkey_running,
+                "restore_pending": self._hotkey_restore_pending,
             },
             "monitors": monitors.enumerate_monitors(),
             "pending": self.recover_on_boot(),
@@ -712,6 +714,8 @@ class Api:
                 raise ValueError(f"Unknown hotkey: {key!r}")
             native_wh = _coerce_wh(native)
             stretched_wh = _coerce_wh(stretched)
+            if self._hotkey_restore_pending:
+                raise RuntimeError("The previous resolution still needs restoring -- call stop_hotkey first")
             if self._hotkey_running:
                 toggle = self._hotkey_toggle
                 same_config = (
@@ -801,9 +805,11 @@ class Api:
                     raise RuntimeError(
                         "The hotkey listener is still stopping. Try again in a moment."
                     )
-                self._hotkey_toggle = None
                 self._hotkey_running = False
+                self._hotkey_restore_pending = True
                 self._restore_entry_resolution(toggle)
+                self._hotkey_restore_pending = False
+                self._hotkey_toggle = None
             else:
                 self._hotkey_running = False
 
@@ -830,13 +836,6 @@ class Api:
         those two fields are labelled, which is why the decision is made here
         rather than from `is_stretched`.
 
-        Only a resolution this toggle itself applied is undone: if the current
-        mode is neither `native_res` nor `stretched_res`, something else set it
-        (a game, another tool, the user via the panel) and shutdown leaves it
-        alone instead of stomping on it. A `None` `entry_res` (the display
-        could not be read at `start()`) likewise means there is nothing known
-        to restore.
-
         Per this class's naming convention (see the Concurrency model section
         of the class docstring), the absence of an `_under_lock` suffix means
         the CALLER must already hold the relevant lock -- here
@@ -850,11 +849,15 @@ class Api:
         entry_res = toggle.entry_res
         if entry_res is None:
             return
-        current_res = display.get_current_resolution()
-        if current_res is None or tuple(current_res) == tuple(entry_res):
+        last_applied_res = toggle.last_applied_res
+        if last_applied_res is None:
             return
-        applied_by_toggle = {tuple(toggle.native_res), tuple(toggle.stretched_res)}
-        if tuple(current_res) not in applied_by_toggle:
+        current_res = display.get_current_resolution()
+        if current_res is None:
+            raise RuntimeError("Could not read the current resolution -- try stopping the hotkey again")
+        if tuple(current_res) == tuple(entry_res):
+            return
+        if tuple(current_res) != tuple(last_applied_res):
             return
         ok, message = display.set_resolution(*entry_res)
         if not ok:
@@ -886,13 +889,14 @@ class Api:
         """
         with _LockAcquireGuard.non_blocking(self._hotkey_lock) as guard:
             if not guard.acquired:
-                return {"running": self._hotkey_running}
+                return {"running": self._hotkey_running, "restore_pending": self._hotkey_restore_pending}
             toggle = self._hotkey_toggle
             actually_running = toggle is not None and toggle.is_running
             if self._hotkey_running and not actually_running:
                 self._hotkey_running = False
-                self._hotkey_toggle = None
-            return {"running": self._hotkey_running}
+                if not self._hotkey_restore_pending:
+                    self._hotkey_toggle = None
+            return {"running": self._hotkey_running, "restore_pending": self._hotkey_restore_pending}
 
     @bridge_op()
     def check_updates(self):
@@ -1066,7 +1070,7 @@ class Api:
         if job is None or job.snapshot().get("stage") != "ready":
             raise RuntimeError("No verified update is ready to install")
         self._prepare_update_handoff_locked()
-        return updater.apply_update(
+        return updater.confirm_update(
             None,
             version_info=job.version_info,
             reuse_download=True,

@@ -53,6 +53,7 @@ class _JoinAwareFakeToggle:
         # restore -- without which this test would pass vacuously, never
         # reaching the set_resolution call whose overlap it exists to detect.
         self.entry_res = (1920, 1080)
+        self.last_applied_res = (1440, 1080)
         self._press_in_progress = press_in_progress
         self.stop_called = threading.Event()
 

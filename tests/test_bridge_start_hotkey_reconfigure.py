@@ -30,6 +30,7 @@ def _isolated_app_dir(tmp_path, monkeypatch):
 
 class _FakeToggle:
     instances = []
+    entry_res = None
 
     def __init__(self, key_name, native_res, stretched_res, on_status):
         self.key_name = key_name

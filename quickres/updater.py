@@ -884,7 +884,7 @@ def apply_update(download_url, version_info=None, *, progress_callback=None,
     sys.exit(0)
 
 
-def confirm_update(download_url: str, version_info=None) -> None:
+def confirm_update(download_url: str | None, version_info=None, *, reuse_download: bool = False):
     """Distinguishes an expected clean-exit case from a genuine failure
     that must be reported to the UI, owned here rather than in
     `webview/bridge.py` so `Api.confirm_update` can stay a zero-try/except
@@ -908,6 +908,8 @@ def confirm_update(download_url: str, version_info=None) -> None:
     keeps working unchanged.
     """
     try:
-        apply_update(download_url, version_info=version_info)
+        if reuse_download:
+            return apply_update(download_url, version_info=version_info, reuse_download=True)
+        return apply_update(download_url, version_info=version_info)
     except SystemExit:
         os._exit(0)

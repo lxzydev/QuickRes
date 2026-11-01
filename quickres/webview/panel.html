@@ -263,6 +263,7 @@ let guardPollTimer = null;
 const GUARD_POLL_MS = 4000;
 
 let hotkeyPollTimer = null;
+let hotkeyPollGeneration = 0;
 // The hotkey listener thread can die on its own (e.g. a GetMessageW
 // failure) with no automatic restart and nothing but a quickres.log trace
 // -- state.hotkey.running only ever changes from an explicit
@@ -460,8 +461,9 @@ function renderHotkeySection(state) {
   stateLabel.textContent = state.hotkey.running ? (s.hotkey_state_running || 'Listening') : (s.hotkey_state_stopped || 'Stopped');
   el('qr-hotkey-start').textContent = s.btn_start_hotkey || 'Start Hotkey';
   el('qr-hotkey-stop').textContent = s.btn_stop_hotkey || 'Stop Hotkey';
-  el('qr-hotkey-start').hidden = state.hotkey.running;
-  el('qr-hotkey-stop').hidden = !state.hotkey.running;
+  const needsStop = state.hotkey.running || !!state.hotkey.restore_pending;
+  el('qr-hotkey-start').hidden = needsStop;
+  el('qr-hotkey-stop').hidden = !needsStop;
 }
 
 function renderNoticeSection(state) {
@@ -554,6 +556,7 @@ function startGuardPolling() {
 }
 
 function stopHotkeyPolling() {
+  hotkeyPollGeneration += 1;
   if (hotkeyPollTimer) { clearInterval(hotkeyPollTimer); hotkeyPollTimer = null; }
 }
 
@@ -564,7 +567,7 @@ function stopHotkeyPolling() {
 // interval immediately instead of waiting for the next tick.
 function startHotkeyPolling() {
   stopHotkeyPolling();
-  if (!S.hotkey.running) return;
+  if (!S.hotkey.running && !S.hotkey.restore_pending) return;
   hotkeyPollTimer = setInterval(pollHotkeyOnce, HOTKEY_POLL_MS);
 }
 
@@ -614,13 +617,18 @@ function startResolutionPolling() {
 }
 
 async function pollHotkeyOnce() {
+  const generation = hotkeyPollGeneration;
   const d = await call('get_hotkey_status');
-  if (d && !d.running && S.hotkey.running) {
-    S.hotkey.running = false;
-    renderHotkeySection(S);
-    pushStatus('err', S.strings.hotkey_state_stopped || 'Hotkey stopped unexpectedly');
+  if (generation !== hotkeyPollGeneration) return;
+  if (d) {
+    const stoppedUnexpectedly = !d.running && S.hotkey.running;
+    const changed = S.hotkey.running !== d.running || !!S.hotkey.restore_pending !== !!d.restore_pending;
+    S.hotkey.running = d.running;
+    S.hotkey.restore_pending = !!d.restore_pending;
+    if (changed) renderHotkeySection(S);
+    if (stoppedUnexpectedly) pushStatus('err', S.strings.hotkey_state_stopped || 'Hotkey stopped unexpectedly');
   }
-  if (!S.hotkey.running) stopHotkeyPolling();
+  if (!S.hotkey.running && !S.hotkey.restore_pending) stopHotkeyPolling();
 }
 
 function startCountdownIfNeeded() {
@@ -1324,15 +1332,30 @@ el('qr-panel').addEventListener('click', async function (e) {
   }
 
   if (e.target.id === 'qr-hotkey-start') {
-    const d = await call('start_hotkey', el('qr-hotkey-key').value, el('qr-hotkey-native').value, el('qr-hotkey-stretched').value);
-    if (d) { S.hotkey.running = d.running; renderHotkeySection(S); startHotkeyPolling(); }
+    const profile = {
+      key: el('qr-hotkey-key').value,
+      native_res: el('qr-hotkey-native').value,
+      stretched_res: el('qr-hotkey-stretched').value,
+    };
+    const d = await call('start_hotkey', profile.key, profile.native_res, profile.stretched_res);
+    if (d) {
+      Object.assign(S.hotkey, profile, { running: d.running, restore_pending: false });
+      renderHotkeySection(S);
+      startHotkeyPolling();
+    }
     return;
   }
 
   if (e.target.id === 'qr-hotkey-stop') {
     const d = await call('stop_hotkey');
-    if (d) { S.hotkey.running = d.running; renderHotkeySection(S); }
-    stopHotkeyPolling();
+    if (d) {
+      S.hotkey.running = d.running;
+      S.hotkey.restore_pending = false;
+      renderHotkeySection(S);
+      stopHotkeyPolling();
+    } else {
+      startHotkeyPolling();
+    }
     return;
   }
 
@@ -1495,6 +1518,7 @@ async function boot() {
   applyHotkeyDefaults(S);
   renderAll(S);
   startResolutionPolling();
+  startHotkeyPolling();
   // A boot/crash-recovered pending record has no live guard, so
   // S.guardRemainingS stays null and startCountdownIfNeeded()'s early
   // return is never reached from here -- polling used to only ever start

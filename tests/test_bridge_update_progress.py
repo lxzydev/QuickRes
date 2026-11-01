@@ -71,3 +71,29 @@ def test_install_verified_update_uses_safety_handoff_and_existing_rollback_path(
     assert result["ok"] is True
     assert result["data"] == {"started": True}
     assert events == ["handoff", "apply"]
+
+
+@pytest.mark.parametrize("failure", [None, OSError("could not stage update")])
+def test_verified_install_exits_the_process_only_after_success(monkeypatch, failure):
+    from types import SimpleNamespace
+    from quickres import updater
+
+    api = Api()
+    api._update_job = SimpleNamespace(snapshot=lambda: {"stage": "ready"}, version_info={})
+    events = []
+    monkeypatch.setattr(api, "_prepare_update_handoff_locked", lambda: events.append("handoff"))
+
+    def apply(*args, **kwargs):
+        events.append("stage")
+        if failure:
+            raise failure
+        raise SystemExit(0)
+
+    monkeypatch.setattr(updater, "apply_update", apply)
+    monkeypatch.setattr(updater.os, "_exit", lambda code: events.append(("exit", code)))
+
+    result = api.install_downloaded_update()
+
+    assert events == (["handoff", "stage"] if failure else ["handoff", "stage", ("exit", 0)])
+    assert result["ok"] is (failure is None)
+    assert not api._op_lock.locked()

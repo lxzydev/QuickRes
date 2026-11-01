@@ -23,6 +23,7 @@ def test_toggle_does_not_flip_is_stretched_when_set_resolution_fails(monkeypatch
 
 
 def test_toggle_flips_is_stretched_when_set_resolution_succeeds(monkeypatch):
+    monkeypatch.setattr(hotkey_mod, "get_current_resolution", lambda: (1920, 1080))
     monkeypatch.setattr(hotkey_mod, "set_resolution", lambda *a, **kw: (True, "ok"))
     toggle = HotkeyToggle(
         "F9",
@@ -411,6 +412,7 @@ def test_is_stretched_toggle_is_atomic_across_the_whole_toggle_operation(monkeyp
     until `_toggle()` releases the lock, then observes the POST-toggle
     value -- never the stale pre-toggle value.
     """
+    monkeypatch.setattr(hotkey_mod, "get_current_resolution", lambda: (1920, 1080))
     entered_set_resolution = threading.Event()
     release_set_resolution = threading.Event()
 

@@ -46,6 +46,7 @@ class _FakeToggle:
 
     def __init__(self, *, entry_res, native_res=(1920, 1440), stretched_res=(2560, 1440)):
         self.entry_res = entry_res
+        self.last_applied_res = (1920, 1440)
         self.native_res = native_res
         self.stretched_res = stretched_res
         self.is_running = False
@@ -177,15 +178,18 @@ class TestStopLeavesForeignResolutionsAlone:
 
         assert applied == []
 
-    def test_unreadable_current_resolution_restores_nothing(
+    def test_unreadable_current_resolution_reports_retryable_failure(
         self, monkeypatch, applied
     ):
         toggle = _FakeToggle(entry_res=(2560, 1440))
         _observe(monkeypatch, None)
 
-        _api_with(toggle)._stop_hotkey_impl()
+        api = _api_with(toggle)
+        with pytest.raises(RuntimeError, match="Could not read the current resolution"):
+            api._stop_hotkey_impl()
 
         assert applied == []
+        assert api._hotkey_toggle is toggle
 
 
 class TestFailedRestoreIsNotReportedAsACleanStop:

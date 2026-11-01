@@ -69,6 +69,7 @@ class TestStopHotkeySurfacesRevertFailure:
             native_res = (1920, 1080)
             stretched_res = (1440, 1080)
             entry_res = (1920, 1080)
+            last_applied_res = (1440, 1080)
 
             def __init__(self):
                 self.stopped = False

@@ -99,6 +99,7 @@ class HotkeyToggle:
         # stopping can put the display back where the user left it instead of
         # inferring a target from `_is_stretched` (see `entry_res` below).
         self._entry_res = None
+        self._last_applied_res = None
 
     @property
     def is_running(self) -> bool:
@@ -126,6 +127,11 @@ class HotkeyToggle:
     def is_stretched(self, value):
         with self._is_stretched_lock:
             self._is_stretched = value
+
+    @property
+    def last_applied_res(self):
+        with self._is_stretched_lock:
+            return self._last_applied_res
 
     @property
     def entry_res(self):
@@ -172,6 +178,8 @@ class HotkeyToggle:
         # leaves it None, which `_stop_hotkey_impl` treats as "nothing known
         # to restore" rather than guessing.
         self._entry_res = get_current_resolution()
+        with self._is_stretched_lock:
+            self._last_applied_res = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout=_READY_TIMEOUT_S):
@@ -280,6 +288,7 @@ class HotkeyToggle:
             ok, result_msg = set_resolution(*target)
             if ok:
                 self._is_stretched = not currently_stretched
+                self._last_applied_res = tuple(target)
         self.on_status(result_msg)
         log_msg(f"Hotkey toggle -> {target[0]}x{target[1]} ({'ok' if ok else 'fail'})")
 

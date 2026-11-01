@@ -362,6 +362,7 @@ class TestHotkeyConcurrency:
                 # Armed from the native resolution -- what _stop_hotkey_impl
                 # now restores, instead of inferring a target from a flag.
                 self.entry_res = native_res
+                self.last_applied_res = stretched_res
 
             def start(self):
                 calls.append("start")

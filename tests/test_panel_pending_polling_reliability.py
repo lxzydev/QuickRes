@@ -87,6 +87,12 @@ function makeFakeElement(id) {
     addEventListener(type, fn) { (handlers[type] = handlers[type] || []).push(fn); },
     __handlers: handlers,
     appendChild(child) { children.push(child); return child; },
+    cloneNode() {
+      const copy = makeFakeElement();
+      copy.value = store.value;
+      copy.textContent = store.textContent;
+      return copy;
+    },
     removeChild(child) { const i = children.indexOf(child); if (i >= 0) children.splice(i, 1); return child; },
     setAttribute() {},
     closest() { return null; },
@@ -154,6 +160,91 @@ def _run_harness(script: str, scenario: str) -> dict:
     lines = [line for line in proc.stdout.strip().splitlines() if line.strip()]
     assert lines, f"node harness produced no output\n--- stderr ---\n{proc.stderr}"
     return json.loads(lines[-1])
+
+
+def test_hotkey_profile_survives_start_stop_start(panel_script):
+    result = _run_harness(panel_script, r"""
+(async () => {
+  const calls = [];
+  window.pywebview = { api: {
+    start_hotkey: async (...args) => { calls.push(args); return {ok:true, data:{running:true}}; },
+    stop_hotkey: async () => ({ok:true, data:{running:false}}),
+  }};
+  S.hotkey = {key:'F6', native_res:'1920x1080', stretched_res:'1440x1080', running:false};
+  el('qr-hotkey-key').value = 'F7';
+  el('qr-hotkey-native').value = '2560x1440';
+  el('qr-hotkey-stretched').value = '1920x1440';
+  const click = el('qr-panel').__handlers.click[0];
+  await click({target:el('qr-hotkey-start')});
+  const shown = [el('qr-hotkey-key').value, el('qr-hotkey-native').value, el('qr-hotkey-stretched').value];
+  await click({target:el('qr-hotkey-stop')});
+  await click({target:el('qr-hotkey-start')});
+  console.log(JSON.stringify({calls, shown}));
+  process.exit(0);
+})().catch(err => fail(err.stack));
+""")
+    profile = ["F7", "2560x1440", "1920x1440"]
+    assert result == {"calls": [profile, profile], "shown": profile}
+
+
+def test_failed_stop_keeps_retry_button_after_status_poll(panel_script):
+    result = _run_harness(panel_script, r"""
+(async () => {
+  window.pywebview = { api: {
+    stop_hotkey: async () => ({ok:false, kind:'error', message:'driver refused'}),
+    get_hotkey_status: async () => ({ok:true, data:{running:false, restore_pending:true}}),
+  }};
+  S.hotkey.running = true;
+  const click = el('qr-panel').__handlers.click[0];
+  await click({target:el('qr-hotkey-stop')});
+  await pollHotkeyOnce();
+  console.log(JSON.stringify({stopHidden:el('qr-hotkey-stop').hidden, startHidden:el('qr-hotkey-start').hidden}));
+  process.exit(0);
+})().catch(err => fail(err.stack));
+""")
+    assert result == {"stopHidden": False, "startHidden": True}
+
+
+def test_boot_resumes_polling_and_retry_stop_for_pending_restore(panel_script):
+    result = _run_harness(panel_script, r"""
+(async () => {
+  const initial = Object.assign({}, S, {
+    current_resolution:null,
+    hotkey:{key:'F6', native_res:'1920x1080', stretched_res:'1440x1080', running:false, restore_pending:true},
+  });
+  window.pywebview = {api:{get_initial_state:async () => ({ok:true, data:initial})}};
+  await boot();
+  console.log(JSON.stringify({polling:hotkeyPollTimer !== null, stopHidden:el('qr-hotkey-stop').hidden}));
+  process.exit(0);
+})().catch(err => fail(err.stack));
+""")
+    assert result == {"polling": True, "stopHidden": False}
+
+
+@pytest.mark.parametrize("late_response", [False, True])
+def test_hotkey_poll_preserves_edits_and_ignores_pre_stop_response(panel_script, late_response):
+    scenario = r"""
+(async () => {
+  let reply;
+  window.pywebview = { api: {
+    get_hotkey_status: () => new Promise(resolve => { reply = resolve; }),
+    stop_hotkey: async () => ({ok:true, data:{running:false}}),
+  }};
+  S.hotkey.running = true;
+  el('qr-hotkey-key').value = 'F8';
+  const poll = pollHotkeyOnce();
+  if (LATE) await el('qr-panel').__handlers.click[0]({target:el('qr-hotkey-stop')});
+  reply({ok:true, data:{running:true}});
+  await poll;
+  console.log(JSON.stringify({key:el('qr-hotkey-key').value, running:S.hotkey.running}));
+  process.exit(0);
+})().catch(err => fail(err.stack));
+""".replace("LATE", str(late_response).lower())
+    result = _run_harness(panel_script, scenario)
+    if late_response:
+        assert result["running"] is False
+    else:
+        assert result["key"] == "F8"
 
 
 # -- Finding 1: keep_disabled()/revert_now() must not wipe a still-pending sibling --
