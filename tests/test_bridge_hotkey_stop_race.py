@@ -39,7 +39,9 @@ class TestStopHotkeyMutualExclusionWithStart:
 
     def test_stop_waits_for_start_to_release_then_succeeds(self, monkeypatch):
         class FakeToggle:
-            is_stretched = False
+            # No observed entry resolution -> nothing for the stop path to
+            # restore, keeping this test focused on the lock handoff.
+            entry_res = None
 
             def stop(self):
                 pass
@@ -64,8 +66,9 @@ class TestStopHotkeyMutualExclusionWithStart:
 class TestStopHotkeySurfacesRevertFailure:
     def test_failed_native_revert_is_reported_not_swallowed(self, monkeypatch):
         class FakeToggle:
-            is_stretched = True
             native_res = (1920, 1080)
+            stretched_res = (1440, 1080)
+            entry_res = (1920, 1080)
 
             def __init__(self):
                 self.stopped = False
@@ -73,6 +76,12 @@ class TestStopHotkeySurfacesRevertFailure:
             def stop(self):
                 self.stopped = True
 
+        # Left on the stretched resolution, so the stop path attempts the
+        # restore back to entry_res -- and that attempt is what fails here.
+        monkeypatch.setattr(
+            "quickres.webview.bridge.display.get_current_resolution",
+            lambda: (1440, 1080),
+        )
         monkeypatch.setattr(
             "quickres.webview.bridge.display.set_resolution",
             lambda w, h: (False, "driver refused resolution"),

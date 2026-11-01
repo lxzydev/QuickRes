@@ -4,7 +4,7 @@ import threading
 import time
 
 from quickres.config import call_logged, log_msg
-from quickres.display import set_resolution
+from quickres.display import get_current_resolution, set_resolution
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -95,6 +95,10 @@ class HotkeyToggle:
         # judged inconsequential for a single-user desktop utility.
         self._is_stretched_lock = threading.Lock()
         self._is_stretched = False
+        # The resolution actually active when this listener went live, so
+        # stopping can put the display back where the user left it instead of
+        # inferring a target from `_is_stretched` (see `entry_res` below).
+        self._entry_res = None
 
     @property
     def is_running(self) -> bool:
@@ -123,6 +127,30 @@ class HotkeyToggle:
         with self._is_stretched_lock:
             self._is_stretched = value
 
+    @property
+    def entry_res(self):
+        """The `(width, height)` the display was actually running when
+        `start()` armed this listener, or `None` if it could not be read.
+
+        This exists because `is_stretched` is not a safe basis for deciding
+        what to restore on stop. It is an in-memory guess seeded to `False`
+        and flipped once per successful toggle, so it only describes reality
+        if `native_res`/`stretched_res` are labelled correctly AND the
+        display was genuinely on `native_res` when the listener started.
+        Neither is guaranteed: the two values come from user-editable fields
+        that `webview/panel.html`'s `applyHotkeyDefaults` pre-fills from
+        whatever resolution happened to be active on first launch, so a user
+        who first opened QuickRes while already stretched has them the wrong
+        way round in `config.json` -- and stopping then applied
+        `native_res`, throwing the display to the stretched resolution the
+        user had just toggled away from.
+
+        Recording the observed entry resolution sidesteps those labels
+        entirely: `webview/bridge.py`'s `_stop_hotkey_impl` restores this
+        exact value, which is correct whichever way round the fields are.
+        """
+        return self._entry_res
+
     def start(self):
         """Start the listener thread and block until it has decided
         (registered the hotkey or failed to). The return value of
@@ -138,6 +166,12 @@ class HotkeyToggle:
         self._ready.clear()
         self._registered = False
         self._cancel.clear()
+        # Read BEFORE the listener thread can register and process a press,
+        # so this is the resolution the user was on when they armed the
+        # hotkey and never one this toggle applied itself. A failed read
+        # leaves it None, which `_stop_hotkey_impl` treats as "nothing known
+        # to restore" rather than guessing.
+        self._entry_res = get_current_resolution()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         if not self._ready.wait(timeout=_READY_TIMEOUT_S):
@@ -221,10 +255,31 @@ class HotkeyToggle:
         # set_resolution call + write, not just the final assignment -- see
         # the comment on `_is_stretched_lock` in __init__ for why.
         with self._is_stretched_lock:
-            target = self.native_res if self._is_stretched else self.stretched_res
+            # Direction comes from the resolution the display is ACTUALLY on,
+            # not from `_is_stretched`. Seeded to False, that flag assumes the
+            # session begins on `native_res` -- so starting the hotkey while
+            # already on `stretched_res` made the first press re-apply the
+            # resolution that was already active: a press that visibly did
+            # nothing, and left the flag inverted relative to reality for
+            # every press after it. Observing the current mode instead also
+            # keeps the toggle correct when something else changed the
+            # resolution mid-session (a game, another tool, Windows itself).
+            #
+            # `_is_stretched` is still maintained below -- it continues to
+            # back the `is_stretched` property other modules read -- but it is
+            # now derived from the observation rather than trusted as input.
+            current = get_current_resolution()
+            if current is not None:
+                currently_stretched = tuple(current) == tuple(self.stretched_res)
+            else:
+                # No reading available (EnumDisplaySettingsW failed): fall
+                # back to the flag so a failed query degrades to the previous
+                # behaviour instead of breaking the toggle outright.
+                currently_stretched = self._is_stretched
+            target = self.native_res if currently_stretched else self.stretched_res
             ok, result_msg = set_resolution(*target)
             if ok:
-                self._is_stretched = not self._is_stretched
+                self._is_stretched = not currently_stretched
         self.on_status(result_msg)
         log_msg(f"Hotkey toggle -> {target[0]}x{target[1]} ({'ok' if ok else 'fail'})")
 
