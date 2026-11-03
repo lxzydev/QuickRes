@@ -55,6 +55,19 @@ This project is fully open source. Feel free to modify it for your own use.
 
 ## Building from source
 
+### GitHub Actions
+
+The `CI` workflow runs Python syntax checks, Ruff error checks, dependency checks, and the test suite on Windows for pushes and pull requests. Test reports are saved as workflow artifacts.
+
+To prepare a release:
+
+1. Set `__version__` in `quickres/__init__.py` to a version newer than all published releases, such as `1.3.0` or `1.3.0-beta.1`, and push the change.
+2. Open **Actions > Draft release > Run workflow** and choose the branch to build. The optional version field must match the source version; it does not change it.
+3. After checks pass, the workflow builds `QuickRes.exe` from `QuickRes.spec` and creates a draft containing the executable, `SHA256SUMS.txt`, and a changelog of commits since the previous published version. Files and release notes are also available as a workflow artifact.
+4. Review the draft and publish it manually. Beta, alpha, and RC versions are marked as prereleases.
+
+Rerunning the same commit can refresh its draft. Published releases, existing tags pointing to other commits, and drafts for other commits are not overwritten.
+
 QuickRes uses [pywebview](https://pywebview.flowrl.com/) for its GUI (the panel is a single `quickres/webview/panel.html` file rendered in an embedded EdgeChromium window), not Tkinter. Windows only.
 
 ```bash

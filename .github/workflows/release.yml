@@ -1,0 +1,84 @@
+name: Draft release
+run-name: Draft QuickRes release from ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected source version (optional, for example 1.3.0)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draft-release
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  build:
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14"
+          architecture: x64
+          cache: pip
+      - name: Install build dependencies
+        run: python -m pip install --require-hashes -r requirements.txt
+      - name: Validate version and prepare changelog
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: python scripts/release.py prepare --version "$env:EXPECTED_VERSION"
+      - name: Build portable executable
+        run: python -m PyInstaller --noconfirm --clean QuickRes.spec
+      - name: Generate checksum
+        run: python scripts/release.py checksum
+      - name: Upload release files
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: QuickRes-${{ steps.release.outputs.version }}-windows-x64
+          path: |
+            dist/QuickRes.exe
+            dist/SHA256SUMS.txt
+            dist/release-notes.md
+          if-no-files-found: error
+          retention-days: 30
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+  draft:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14"
+      - run: python -m pip install packaging==26.3
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: QuickRes-${{ needs.build.outputs.version }}-windows-x64
+          path: dist
+      - name: Create or update draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONUTF8: "1"
+        run: python scripts/release.py draft
