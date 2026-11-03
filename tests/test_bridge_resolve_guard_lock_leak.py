@@ -10,6 +10,7 @@ until the app restarted.
 """
 import threading
 import time
+from unittest.mock import Mock
 
 import pytest
 
@@ -144,18 +145,18 @@ class TestLockAcquireGuardNamedConstructors:
     of the three modes.
     """
 
-    def test_non_blocking_returns_immediately_when_lock_is_held(self):
+    def test_non_blocking_does_not_wait_or_release_a_held_lock(self):
         from quickres.webview.bridge import _LockAcquireGuard
 
         lock = threading.Lock()
         lock.acquire()
-        start = time.monotonic()
+        observed_lock = Mock(wraps=lock)
 
-        with _LockAcquireGuard.non_blocking(lock) as guard:
-            elapsed = time.monotonic() - start
+        with _LockAcquireGuard.non_blocking(observed_lock) as guard:
             assert guard.acquired is False
-            assert elapsed < 0.5, "non_blocking must not wait at all"
 
+        observed_lock.acquire.assert_called_once_with(blocking=False)
+        assert lock.locked() is True
         lock.release()
 
     def test_non_blocking_acquires_when_lock_is_free(self):
@@ -168,18 +169,18 @@ class TestLockAcquireGuardNamedConstructors:
 
         assert lock.locked() is False
 
-    def test_bounded_waits_the_given_timeout_then_gives_up(self):
+    def test_bounded_uses_timeout_and_does_not_release_a_held_lock(self):
         from quickres.webview.bridge import _LockAcquireGuard
 
         lock = threading.Lock()
         lock.acquire()
-        start = time.monotonic()
+        observed_lock = Mock(wraps=lock)
 
-        with _LockAcquireGuard.bounded(lock, 0.1) as guard:
-            elapsed = time.monotonic() - start
+        with _LockAcquireGuard.bounded(observed_lock, 0.1) as guard:
             assert guard.acquired is False
-            assert elapsed >= 0.1, "bounded must actually wait out the timeout"
 
+        observed_lock.acquire.assert_called_once_with(blocking=True, timeout=0.1)
+        assert lock.locked() is True
         lock.release()
 
     def test_bounded_acquires_if_released_within_the_timeout(self):
