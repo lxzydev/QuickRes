@@ -43,8 +43,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_VERSION: ${{ inputs.version }}
         run: python scripts/release.py prepare --version "$env:EXPECTED_VERSION"
-      - name: Build portable executable
+      - name: Install Velopack packaging tool
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+        with:
+          dotnet-version: "10.0.x"
+      - name: Install Velopack CLI
+        run: dotnet tool install vpk --version 1.2.161 --tool-path "$env:RUNNER_TEMP/vpk"
+      - name: Build application directory
         run: python -m PyInstaller --noconfirm --clean QuickRes.spec
+      - name: Package installer, portable ZIP and update feed
+        run: python scripts/release.py pack --vpk "$env:RUNNER_TEMP/vpk/vpk.exe"
       - name: Generate checksum
         run: python scripts/release.py checksum
       - name: Upload release files
@@ -52,8 +60,7 @@ jobs:
         with:
           name: QuickRes-${{ steps.release.outputs.version }}-windows-x64
           path: |
-            dist/QuickRes.exe
-            dist/SHA256SUMS.txt
+            dist/releases/*
             dist/release-notes.md
           if-no-files-found: error
           retention-days: 30

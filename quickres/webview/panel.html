@@ -57,7 +57,7 @@ input:focus,select:focus{outline:none;border-color:var(--fg)}
    Without its own scroll box this grid alone can push Custom
    Resolution/Hotkey/etc. below the fold of the whole (already scrollable)
    #qr-panel, making them unreachable without an extra, non-obvious scroll. */
-.qr-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;max-height:186px;overflow-y:auto;padding-right:2px}
+.qr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:7px;max-height:186px;overflow-y:auto;padding-right:2px}
 .qr-grid::-webkit-scrollbar{width:6px}
 .qr-grid::-webkit-scrollbar-thumb{background:var(--line)}
 .qr-grid::-webkit-scrollbar-track{background:transparent}
@@ -160,6 +160,26 @@ select.qr-input{cursor:pointer}
 @keyframes qr-pulse{0%,100%{opacity:1}50%{opacity:.45}}
 @keyframes qr-progress-indeterminate{from{transform:translateX(-125%)}to{transform:translateX(330%)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+.qr-section-toggle{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;text-align:left;background:transparent;border:0;padding:0;color:var(--fg);margin-bottom:8px}
+.qr-section-toggle::before{content:'▾';font-size:12px;color:var(--fg-dim)}
+.qr-section-toggle[aria-expanded="false"]{margin-bottom:0}
+.qr-section-toggle[aria-expanded="false"]::before{content:'▸'}
+.qr-section-body[hidden]{display:none}
+.qr-search-label{display:block;font-size:11px;color:var(--fg-dim);margin-bottom:5px}
+.qr-search{width:100%;margin-bottom:8px}
+.qr-res-item{display:flex;min-width:0;gap:3px}
+.qr-res-item .qr-res-preset{flex:1;min-width:0}
+.qr-favorite{flex:none;width:30px;min-height:32px;background:var(--bg-alt);color:var(--fg-dim);border:1px solid var(--line-soft)}
+.qr-favorite[aria-pressed="true"]{color:var(--fg);border-color:var(--fg-dim)}
+.qr-favorite:hover{border-color:var(--fg)}
+.qr-search-empty{color:var(--fg-dim);font-size:12px;margin:8px 0}
+.qr-hotkey .qr-section-toggle{margin-bottom:0}
+.qr-section-body .qr-hotkey-grid{margin-top:10px}
+.qr-hotkey-summary{font-family:var(--font-mono);font-size:10px;color:var(--fg-dim)}
+.qr-titlebar,.qr-actionbar{flex-wrap:wrap}
+input:focus-visible,select:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+@media(min-width:640px){#qr-panel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-content:start;align-items:start}#qr-sec-res{grid-column:1/-1}.qr-grid{max-height:40vh}#qr-notice-banner,#qr-boot-error{grid-column:1/-1}}
+@media(max-width:360px){#qr-panel{padding:10px;gap:10px}.qr-hotkey-grid{grid-template-columns:minmax(0,1fr)}.qr-hotkey-select{flex-basis:76px}.qr-section-toggle{flex-wrap:wrap}.qr-grid{grid-template-columns:1fr}}
 </style>
 </head><body>
 <header class="qr-titlebar" id="qr-titlebar">
@@ -179,30 +199,36 @@ select.qr-input{cursor:pointer}
     <button type="button" class="qr-btn-solid" id="qr-boot-retry">Retry</button>
   </div>
   <section id="qr-sec-res">
-    <div class="qr-section-title">
+    <button type="button" class="qr-section-toggle" id="qr-toggle-quick" data-section="quick" aria-expanded="true" aria-controls="qr-body-quick">
       <span class="qr-section-label" id="qr-str-quick-res">Quick resolutions</span>
       <span class="qr-section-rule"></span>
+    </button>
+    <div class="qr-section-body" id="qr-body-quick">
+      <label class="qr-search-label" for="qr-res-search" id="qr-search-label">Search resolutions</label>
+      <input type="search" class="qr-input qr-search" id="qr-res-search" autocomplete="off" placeholder="1920, 1080, 1920x1080, 16:9">
+      <div class="qr-grid" id="qr-res-presets"></div>
+      <p class="qr-search-empty" id="qr-search-empty" role="status" hidden></p>
     </div>
-    <div class="qr-grid" id="qr-res-presets"></div>
   </section>
   <section id="qr-sec-custom">
-    <div class="qr-section-title">
+    <button type="button" class="qr-section-toggle" id="qr-toggle-custom" data-section="custom" aria-expanded="true" aria-controls="qr-body-custom">
       <span class="qr-section-label" id="qr-str-custom-res">Custom resolution</span>
       <span class="qr-section-rule"></span>
-    </div>
-    <div class="qr-row">
-      <input type="text" class="qr-input" id="qr-custom-input" placeholder="e.g. 1440x1080">
+    </button>
+    <div class="qr-section-body" id="qr-body-custom"><div class="qr-row">
+      <input type="text" class="qr-input" id="qr-custom-input" aria-labelledby="qr-str-custom-res" placeholder="e.g. 1440x1080">
       <button type="button" class="qr-btn-solid" id="qr-custom-apply">Apply</button>
-    </div>
+    </div></div>
   </section>
   <section id="qr-sec-hotkey" class="qr-hotkey">
-    <div class="qr-section-title">
+    <button type="button" class="qr-section-toggle" id="qr-toggle-hotkey" data-section="hotkey" aria-expanded="true" aria-controls="qr-body-hotkey">
       <span class="qr-section-label" id="qr-str-hotkey-toggle">Hotkey toggle</span>
       <span class="qr-section-rule"></span>
+      <span class="qr-hotkey-summary" id="qr-hotkey-summary">F6</span>
       <span class="qr-hotkey-state" id="qr-hotkey-state">Stopped</span>
-    </div>
-    <div class="qr-row">
-      <select class="qr-input qr-hotkey-select" id="qr-hotkey-key">
+    </button>
+    <div class="qr-section-body" id="qr-body-hotkey"><div class="qr-row">
+      <select class="qr-input qr-hotkey-select" id="qr-hotkey-key" aria-labelledby="qr-str-hotkey-toggle">
         <option>F1</option><option>F2</option><option>F3</option><option>F4</option>
         <option>F5</option><option selected>F6</option><option>F7</option><option>F8</option>
         <option>F9</option><option>F10</option><option>F11</option><option>F12</option>
@@ -217,7 +243,7 @@ select.qr-input{cursor:pointer}
       <select class="qr-input" id="qr-hotkey-native"></select>
       <label for="qr-hotkey-stretched" id="qr-str-stretched">Stretched</label>
       <select class="qr-input" id="qr-hotkey-stretched"></select>
-    </div>
+    </div></div>
   </section>
   <button type="button" class="qr-notice-banner" id="qr-notice-banner">
     <span class="qr-monitor-notice-dot"></span>
@@ -245,6 +271,9 @@ const S = {
   strings: {},
   currentResolution: null,
   presets: [],
+  resolutionQuery: '',
+  uiPreferences: { collapsed_sections: [], favorite_resolutions: [] },
+  hotkeyDraft: null,
   hotkey: { key: 'F6', native_res: '', stretched_res: '', running: false },
   monitors: [],
   pending: { outcomes: [], force_unlockable: false },
@@ -385,11 +414,60 @@ function renderStrings(state) {
   renderHotkeySection(state);
 }
 
+function uiText(state, en, ru) {
+  return state.language.resolved === 'ru' ? ru : en;
+}
+
+function preferencesFor(state) {
+  return state.uiPreferences || { collapsed_sections: [], favorite_resolutions: [] };
+}
+
+let uiSaveQueue = Promise.resolve();
+function saveUiPreferences() {
+  const snapshot = JSON.parse(JSON.stringify(S.uiPreferences));
+  uiSaveQueue = uiSaveQueue.then(function () { return call('set_ui_preferences', snapshot); });
+  return uiSaveQueue;
+}
+
+function renderSectionStates(state) {
+  const collapsed = preferencesFor(state).collapsed_sections;
+  ['quick', 'custom', 'hotkey'].forEach(function (section) {
+    const open = !collapsed.includes(section);
+    el('qr-toggle-' + section).setAttribute('aria-expanded', String(open));
+    el('qr-body-' + section).hidden = !open;
+  });
+  el('qr-search-label').textContent = uiText(state, 'Search resolutions', 'Поиск разрешений');
+}
+
+function presetMatches(preset, query) {
+  const q = query.trim().toLowerCase().replace(/\s/g, '').replace(/×/g, 'x');
+  if (!q) return true;
+  if (q.includes(':')) {
+    const ratio = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(q);
+    return !!ratio && Number(ratio[2]) > 0
+      && Math.abs(preset.width / preset.height - Number(ratio[1]) / Number(ratio[2])) < 0.01;
+  }
+  if (q.includes('x')) return (preset.width + 'x' + preset.height).includes(q);
+  return String(preset.width).includes(q) || String(preset.height).includes(q);
+}
+
 function renderPresetCards(state) {
   const s = state.strings;
   const presetList = el('qr-res-presets');
+  const focused = document.activeElement;
+  const scrollTop = presetList.scrollTop;
   presetList.innerHTML = '';
-  state.presets.forEach(function (p) {
+  const favorites = preferencesFor(state).favorite_resolutions;
+  const visible = state.presets.filter(function (p) { return presetMatches(p, state.resolutionQuery || ''); });
+  visible.sort(function (a, b) {
+    return Number(favorites.includes(b.width + 'x' + b.height)) - Number(favorites.includes(a.width + 'x' + a.height));
+  });
+  const focusKey = focused && focused.dataset && focused.dataset.resolution;
+  let restoreFocus = null;
+  visible.forEach(function (p) {
+    const resolution = p.width + 'x' + p.height;
+    const item = document.createElement('div');
+    item.className = 'qr-res-item';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.dataset.width = p.width;
@@ -409,8 +487,26 @@ function renderPresetCards(state) {
     meta.textContent = kindLabel + ' · ' + p.aspect_ratio;
     btn.appendChild(value);
     btn.appendChild(meta);
-    presetList.appendChild(btn);
+    btn.dataset.resolution = resolution;
+    const favorite = document.createElement('button');
+    favorite.type = 'button';
+    favorite.className = 'qr-favorite';
+    favorite.dataset.favorite = resolution;
+    favorite.dataset.resolution = resolution;
+    const pinned = favorites.includes(resolution);
+    favorite.textContent = pinned ? '★' : '☆';
+    favorite.setAttribute('aria-pressed', String(pinned));
+    favorite.setAttribute('aria-label', uiText(state, 'Favorite ', 'В избранное: ') + resolution);
+    favorite.title = uiText(state, 'Favorite ', 'В избранное: ') + resolution;
+    item.appendChild(btn);
+    item.appendChild(favorite);
+    presetList.appendChild(item);
+    if (resolution === focusKey) restoreFocus = focused.dataset.favorite ? favorite : btn;
   });
+  el('qr-search-empty').hidden = visible.length > 0;
+  el('qr-search-empty').textContent = visible.length ? '' : uiText(state, 'No matching resolutions', 'Разрешения не найдены');
+  presetList.scrollTop = scrollTop;
+  if (restoreFocus && restoreFocus.focus) restoreFocus.focus({ preventScroll: true });
 }
 
 function renderResSection(state) {
@@ -453,9 +549,11 @@ function renderResSection(state) {
 
 function renderHotkeySection(state) {
   const s = state.strings;
-  el('qr-hotkey-key').value = state.hotkey.key;
-  el('qr-hotkey-native').value = state.hotkey.native_res;
-  el('qr-hotkey-stretched').value = state.hotkey.stretched_res;
+  const profile = state.hotkeyDraft || state.hotkey;
+  el('qr-hotkey-summary').textContent = state.hotkey.running ? state.hotkey.key : profile.key;
+  el('qr-hotkey-key').value = profile.key;
+  el('qr-hotkey-native').value = profile.native_res;
+  el('qr-hotkey-stretched').value = profile.stretched_res;
   const stateLabel = el('qr-hotkey-state');
   cls(stateLabel, 'qr-hotkey-state', state.hotkey.running ? 'qr-hotkey-state-on' : '');
   stateLabel.textContent = state.hotkey.running ? (s.hotkey_state_running || 'Listening') : (s.hotkey_state_stopped || 'Stopped');
@@ -485,6 +583,7 @@ function renderAll(state) {
   renderResSection(state);
   renderStrings(state);
   renderNoticeSection(state);
+  renderSectionStates(state);
 }
 
 /* ==S6 MODALS== */
@@ -874,6 +973,9 @@ function isUpdateBusy(status) {
 }
 
 function updateProgressPercent(status) {
+  if (status && status.percentage != null && Number.isFinite(Number(status.percentage))) {
+    return Math.max(0, Math.min(100, Math.round(Number(status.percentage))));
+  }
   const total = Number(status && status.total_bytes);
   const downloaded = Number(status && status.downloaded_bytes) || 0;
   if (!Number.isFinite(total) || total <= 0) return null;
@@ -889,6 +991,9 @@ function formatUpdateSize(bytes) {
 
 function updateStatusText(status) {
   const s = S.strings;
+  if (S.updateInfo && S.updateInfo.migration_required) {
+    return uiText(S, 'Install QuickRes with the new installer, or extract the complete portable ZIP, to enable updates.', 'Для обновлений установите QuickRes новым установщиком или распакуйте полный portable ZIP.');
+  }
   const stage = (status || {}).stage;
   const percent = updateProgressPercent(status);
   if (stage === 'downloading') {
@@ -936,7 +1041,7 @@ function renderUpdateModalStatus() {
     }
   }
   if (later) later.hidden = busy;
-  if (now) now.hidden = busy || failed;
+  if (now) now.hidden = busy || failed || !!(S.updateInfo && S.updateInfo.migration_required);
   if (retry) retry.hidden = !failed;
   if (close) close.hidden = busy;
 }
@@ -945,7 +1050,9 @@ function updateModalMarkup(info) {
   const modal = document.createElement('div');
   modal.className = 'qr-modal';
   const s = S.strings;
-  const built = buildModalHead(s.update_available_title || 'Update available');
+  const built = buildModalHead(info && info.migration_required
+    ? uiText(S, 'Update installation required', 'Нужна установка обновления')
+    : (s.update_available_title || 'Update available'));
   built.head.appendChild(built.close);
   const body = document.createElement('div');
   body.className = 'qr-modal-body';
@@ -992,6 +1099,14 @@ function updateModalMarkup(info) {
   actions.appendChild(later);
   actions.appendChild(now);
   actions.appendChild(retry);
+  if (info && info.migration_required) {
+    const installer = document.createElement('button');
+    installer.type = 'button';
+    installer.className = 'qr-revert-now';
+    installer.dataset.external = info.installer_url;
+    installer.textContent = uiText(S, 'Open downloads', 'Открыть загрузки');
+    actions.appendChild(installer);
+  }
 
   body.appendChild(note);
   body.appendChild(progress);
@@ -1296,7 +1411,43 @@ el('qr-lang-select').addEventListener('change', async function (e) {
   }
 });
 
+el('qr-res-search').addEventListener('input', function (e) {
+  S.resolutionQuery = e.target.value;
+  renderPresetCards(S);
+});
+
+el('qr-panel').addEventListener('change', function (e) {
+  const fields = { 'qr-hotkey-key': 'key', 'qr-hotkey-native': 'native_res', 'qr-hotkey-stretched': 'stretched_res' };
+  const field = fields[e.target.id];
+  if (field) {
+    S.hotkeyDraft = Object.assign({}, S.hotkeyDraft || S.hotkey);
+    S.hotkeyDraft[field] = e.target.value;
+    el('qr-hotkey-summary').textContent = S.hotkey.running ? S.hotkey.key : S.hotkeyDraft.key;
+  }
+});
+
 el('qr-panel').addEventListener('click', async function (e) {
+  const sectionToggle = e.target.closest('[data-section]');
+  if (sectionToggle) {
+    const section = sectionToggle.dataset.section;
+    const collapsed = preferencesFor(S).collapsed_sections;
+    S.uiPreferences.collapsed_sections = collapsed.includes(section)
+      ? collapsed.filter(function (value) { return value !== section; }) : collapsed.concat(section);
+    renderSectionStates(S);
+    await saveUiPreferences();
+    return;
+  }
+  const favorite = e.target.closest('[data-favorite]');
+  if (favorite) {
+    const value = favorite.dataset.favorite;
+    const favorites = preferencesFor(S).favorite_resolutions;
+    S.uiPreferences.favorite_resolutions = favorites.includes(value)
+      ? favorites.filter(function (item) { return item !== value; }) : favorites.concat(value);
+    renderPresetCards(S);
+    await saveUiPreferences();
+    return;
+  }
+
   if (e.target.id === 'qr-boot-retry') {
     await boot();
     return;
@@ -1340,6 +1491,7 @@ el('qr-panel').addEventListener('click', async function (e) {
     const d = await call('start_hotkey', profile.key, profile.native_res, profile.stretched_res);
     if (d) {
       Object.assign(S.hotkey, profile, { running: d.running, restore_pending: false });
+      S.hotkeyDraft = null;
       renderHotkeySection(S);
       startHotkeyPolling();
     }
@@ -1390,7 +1542,7 @@ el('qr-actionbar').addEventListener('click', async function (e) {
     // (below) instead of just toasting, so the SHA-256-gated
     // download/verify/apply pipeline (confirm_update) actually gets a UI
     // trigger. No update keeps the prior toast.
-    if (d && d.update_available) {
+    if (d && (d.update_available || d.migration_required)) {
       S.updateInfo = d;
       S.updateStatus = { stage: 'idle', downloaded_bytes: 0, total_bytes: null, error: null };
       openModal('update');
@@ -1403,6 +1555,7 @@ el('qr-actionbar').addEventListener('click', async function (e) {
 });
 
 el('qr-overlays').addEventListener('click', async function (e) {
+  if (await openExternalLinkIfClicked(e)) return;
   if (e.target.id === 'qr-modal-close' || e.target.id === 'qr-vendor-cancel' || e.target.id === 'qr-update-later') {
     closeOverlay();
     return;
@@ -1511,6 +1664,7 @@ async function boot() {
   S.strings = initial.strings;
   S.currentResolution = initial.current_resolution;
   S.presets = initial.presets;
+  S.uiPreferences = initial.ui_preferences || { collapsed_sections: [], favorite_resolutions: [] };
   S.hotkey = initial.hotkey;
   S.monitors = initial.monitors;
   S.pending = initial.pending;

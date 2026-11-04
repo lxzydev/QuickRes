@@ -106,6 +106,28 @@ def _faq_bundle(lang: str | None = None) -> list:
     return [{"q": i18n.t(q_key, lang=lang), "a": i18n.t(a_key, lang=lang)} for q_key, a_key in _FAQ_KEYS]
 
 
+def _ui_preferences(value, *, strict=False):
+    defaults = {"collapsed_sections": ["custom", "hotkey"], "favorite_resolutions": []}
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError("UI preferences must be an object")
+        return defaults
+    if strict and set(value) - set(defaults):
+        raise ValueError("Unknown UI preference")
+    result = {}
+    for key, fallback in defaults.items():
+        items = value.get(key, fallback)
+        valid = isinstance(items, list) and len(items) <= 100 and all(isinstance(item, str) for item in items)
+        if valid and key == "collapsed_sections":
+            valid = all(item in {"quick", "custom", "hotkey"} for item in items)
+        elif valid:
+            valid = all(re.fullmatch(r"[1-9]\d{1,4}x[1-9]\d{1,4}", item) for item in items)
+        if not valid and strict:
+            raise ValueError(f"Invalid {key}")
+        result[key] = list(dict.fromkeys(items)) if valid else list(fallback)
+    return result
+
+
 def _parse_res_text(text: str):
     match = _RES_TEXT_RE.match((text or "").strip())
     if not match:
@@ -592,10 +614,17 @@ class Api:
                 "running": self._hotkey_running,
                 "restore_pending": self._hotkey_restore_pending,
             },
-            "monitors": monitors.enumerate_monitors(),
+            "ui_preferences": _ui_preferences(cfg.get("ui_preferences")),
+            "monitors": [],
             "pending": self.recover_on_boot(),
             "faq": _faq_bundle(resolved_lang),
         }
+
+    @bridge_op()
+    def set_ui_preferences(self, preferences):
+        normalized = _ui_preferences(preferences, strict=True)
+        config.update_config({"ui_preferences": normalized})
+        return normalized
 
     @bridge_op()
     def get_resolution_state(self):

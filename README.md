@@ -14,8 +14,10 @@ Switching resolution manually through NVIDIA Control Panel (or AMD/Intel equival
 
 ## Install
 
-1. Go to releases and download the latest `QuickRes.exe`
-2. Run it (no install needed, it's a single portable exe)
+1. Download `QuickRes-win-Setup.exe` from the latest published release and run it.
+2. For portable use, extract the entire `QuickRes-win-Portable.zip` into a writable folder and run `QuickRes.exe` there. Keep all bundled files together.
+
+Older single EXE builds must migrate using the installer or the complete portable ZIP. In-app updates use Velopack and restart QuickRes after the download completes. Stable builds only check published stable releases; preview builds use the `win-beta` channel and include prereleases.
 
 Windows may show a SmartScreen warning ("Windows protected your PC") since the exe isn't code-signed.
 
@@ -63,7 +65,7 @@ To prepare a release:
 
 1. Set `__version__` in `quickres/__init__.py` to a version newer than all published releases, such as `1.3.0` or `1.3.0-beta.1`, and push the change.
 2. Open **Actions > Draft release > Run workflow** and choose the branch to build. The optional version field must match the source version; it does not change it.
-3. After checks pass, the workflow builds `QuickRes.exe` from `QuickRes.spec` and creates a draft containing the executable, `SHA256SUMS.txt`, and a changelog of commits since the previous published version. Files and release notes are also available as a workflow artifact.
+3. After checks pass, the workflow builds an application directory from `QuickRes.spec`, packages it with Velopack 1.2.161, and creates a draft containing the installer, portable ZIP, update `.nupkg`, channel feed, `SHA256SUMS.txt`, and a changelog of commits since the previous published version. Files and release notes are also available as a workflow artifact.
 4. Review the draft and publish it manually. Beta, alpha, and RC versions are marked as prereleases.
 
 Rerunning the same commit can refresh its draft. Published releases, existing tags pointing to other commits, and drafts for other commits are not overwritten.
@@ -72,7 +74,11 @@ QuickRes uses [pywebview](https://pywebview.flowrl.com/) for its GUI (the panel 
 
 ```bash
 pip install -r requirements.txt
-python -m PyInstaller --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "quickres/webview;quickres/webview" --name QuickRes main.py
+python -m PyInstaller --noconfirm --clean QuickRes.spec
+dotnet tool install -g vpk --version 1.2.161
+python scripts/release.py prepare --repository lxzydev/QuickRes
+python scripts/release.py pack
+python scripts/release.py checksum
 ```
 
-`QuickRes.spec` bundles `quickres/webview/panel.html` and `quickres/webview/QuickRes.png` at the correct path for the frozen build and excludes Tkinter (unused since the GUI rewrite). The resulting single-file `dist/QuickRes.exe` is portable, no install needed.
+`QuickRes.spec` bundles `quickres/webview/panel.html` and `quickres/webview/QuickRes.png` at the correct path for the frozen build and excludes Tkinter (unused since the GUI rewrite). The application directory is `dist/QuickRes`; release artifacts are in `dist/releases`. Publish every generated feed and package artifact alongside the installer and ZIP so in-app updates can resolve and verify their packages. Packaging requires the .NET SDK; installed QuickRes does not require .NET for Velopack.

@@ -15,11 +15,13 @@ class _FakeClosingSlot:
 class _FakeEvents:
     def __init__(self):
         self.closing = _FakeClosingSlot()
+        self.resized = _FakeClosingSlot()
 
 
 class _FakeWindow:
     def __init__(self):
         self.events = _FakeEvents()
+        self.native = None
 
 
 def test_module_level_window_holder_is_set_not_an_api_attribute(monkeypatch):
@@ -68,7 +70,9 @@ def test_run_app_calls_start(monkeypatch):
     assert started == [1]
 
 
-def test_run_app_requests_a_readable_window_size():
+def test_run_app_requests_a_readable_window_size(monkeypatch):
+    monkeypatch.setattr(app.config, "load_config", lambda: {})
+    monkeypatch.setattr(app, "_work_area_size", lambda: None)
     fake_window = _FakeWindow()
     requested = {}
 

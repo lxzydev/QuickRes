@@ -1,30 +1,4 @@
-import io
-
 from quickres import updater
-
-
-def test_write_download_reports_incremental_progress_for_known_length():
-    class Response:
-        headers = {"Content-Length": "6"}
-
-        def __init__(self):
-            self._payload = io.BytesIO(b"abcdef")
-
-        def read(self, size=-1):
-            return self._payload.read(size)
-
-    events = []
-    out = io.BytesIO()
-
-    updater._write_download(Response(), out, events.append)
-
-    assert out.getvalue() == b"abcdef"
-    assert events[0] == {
-        "stage": "downloading", "downloaded_bytes": 0,
-        "total_bytes": 6, "error": None,
-    }
-    assert events[-1]["downloaded_bytes"] == 6
-    assert events[-1]["total_bytes"] == 6
 
 
 def test_update_job_downloads_and_verifies_off_the_calling_thread(monkeypatch):

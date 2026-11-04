@@ -7,6 +7,9 @@ crash on the EdgeChromium backend. Anything that needs the window
 (e.g. a future theme-toggle titlebar action) must go through `get_window()`.
 """
 
+import ctypes
+import ctypes.wintypes
+import math
 import threading
 
 import webview
@@ -16,6 +19,103 @@ from quickres.config import resource_path
 from quickres.webview.bridge import Api
 
 _WINDOW = None
+_DEFAULT_SIZE = (520, 700)
+_MIN_SIZE = (420, 500)
+_RESIZE_SAVE_DELAY_S = 0.5
+
+
+def _valid_size(width, height):
+    if any(type(v) not in (int, float) or not 1 <= v <= 16384 or not math.isfinite(v)
+           for v in (width, height)):
+        return None
+    return int(width), int(height)
+
+
+def _work_area_size():
+    try:
+        rect = ctypes.wintypes.RECT()
+        user32 = ctypes.windll.user32
+        if not user32.SystemParametersInfoW(0x30, 0, ctypes.byref(rect), 0):
+            return None
+        scale = user32.GetDpiForSystem() / 96
+        return _valid_size((rect.right - rect.left) / scale,
+                           (rect.bottom - rect.top) / scale)
+    except (AttributeError, OSError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _initial_geometry():
+    cfg = config.load_config()
+    stored = cfg.get("window_size") if isinstance(cfg, dict) else None
+    size = _valid_size(stored.get("width"), stored.get("height")) if isinstance(stored, dict) else None
+    width, height = size or _DEFAULT_SIZE
+    area = _work_area_size()
+    minimum = tuple(min(m, a) for m, a in zip(_MIN_SIZE, area)) if area else _MIN_SIZE
+    size = tuple(max(m, v) for m, v in zip(minimum, (width, height)))
+    if area:
+        size = tuple(min(v, a) for v, a in zip(size, area))
+    return size, minimum
+
+
+def _normal_window_size(window):
+    native = window.native
+    if native is None or str(native.WindowState) != "Normal":
+        return None
+    return _valid_size(native.Size.Width / native._scale, native.Size.Height / native._scale)
+
+
+class _WindowSizePersistence:
+    def __init__(self, window, initial_size, minimum):
+        self.window = window
+        self.minimum = minimum
+        self.saved = initial_size
+        self.latest = initial_size
+        self.timer = None
+        self.lock = threading.RLock()
+        self.closed = False
+        self.revision = 0
+
+    def resized(self, width, height):
+        size = _valid_size(width, height)
+        if size is None or any(v < m for v, m in zip(size, self.minimum)):
+            return
+        with self.lock:
+            if self.closed or _normal_window_size(self.window) is None:
+                return
+            self.latest = size
+            if self.timer is not None:
+                self.timer.cancel()
+            self.revision += 1
+            self.timer = threading.Timer(_RESIZE_SAVE_DELAY_S, self._save_revision,
+                                         args=(self.revision,))
+            self.timer.daemon = True
+            self.timer.start()
+
+    def _save_revision(self, revision):
+        with self.lock:
+            if not self.closed and revision == self.revision:
+                self.flush()
+
+    def flush(self):
+        with self.lock:
+            if self.latest == self.saved:
+                return
+            try:
+                width, height = self.latest
+                config.update_config({"window_size": {"width": width, "height": height}})
+                self.saved = self.latest
+            except Exception as exc:
+                config.log_msg(f"Failed to save window size: {exc}")
+
+    def close(self):
+        with self.lock:
+            self.closed = True
+            if self.timer is not None:
+                self.timer.cancel()
+            size = _normal_window_size(self.window)
+            if size is not None and all(v >= m for v, m in zip(size, self.minimum)):
+                self.latest = size
+            self.flush()
 
 # Upper bound on how long window-close waits for guard resolution
 # (`Api._resolve_guard_unbounded_under_lock`, run via `config.call_logged` on a
@@ -52,6 +152,7 @@ def run_app(*, create_window_fn=None, start_fn=None):
     start_fn = start_fn or webview.start
 
     api = Api()
+    size, minimum = _initial_geometry()
     window = create_window_fn(
         "QuickRes",
         resource_path("quickres/webview/panel.html"),
@@ -61,13 +162,17 @@ def run_app(*, create_window_fn=None, start_fn=None):
         # compact size made readable type and the monitor/update dialogs
         # compete for the same vertical space, so leave a comfortable client
         # area for the main controls and status text.
-        width=520,
-        height=700,
-        resizable=False,
+        width=size[0],
+        height=size[1],
+        min_size=minimum,
+        resizable=True,
     )
     _WINDOW = window
+    geometry = _WindowSizePersistence(window, size, minimum)
+    window.events.resized += geometry.resized
 
     def _on_closing():
+        config.call_logged(geometry.close, on_error="_on_closing: window_size")
         # Window teardown makes a best-effort attempt to resolve any
         # still-armed 10s auto-revert guard itself before the process
         # exits: the real guard timer is a daemon thread precisely so it

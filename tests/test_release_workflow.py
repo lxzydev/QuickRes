@@ -51,6 +51,10 @@ def test_new_release_is_always_a_draft_for_the_built_commit(tmp_path, monkeypatc
     monkeypatch.setattr(release, "ROOT", tmp_path)
     monkeypatch.setattr(release, "releases_for", lambda _: [])
     monkeypatch.setattr(release, "git", lambda *args: "a" * 40)
+    installer = tmp_path / "dist" / "releases" / "QuickRes-win-Setup.exe"
+    installer.parent.mkdir(parents=True)
+    (installer.parent / "SHA256SUMS.txt").touch()
+    monkeypatch.setattr(release, "release_assets", lambda: [installer])
     commands = []
     monkeypatch.setattr(release.subprocess, "run", lambda command, **kwargs: commands.append(command))
 
@@ -61,7 +65,7 @@ def test_new_release_is_always_a_draft_for_the_built_commit(tmp_path, monkeypatc
     assert command[:4] == ["gh", "release", "create", "v1.3.0"]
     assert "--draft" in command
     assert command[command.index("--target") + 1] == "a" * 40
-    assert str(tmp_path / "dist" / "QuickRes.exe") in command
+    assert str(installer) in command
 
 
 def test_draft_for_another_commit_is_not_overwritten(tmp_path, monkeypatch):

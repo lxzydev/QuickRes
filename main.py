@@ -1,3 +1,8 @@
+import velopack
+
+if __name__ == "__main__":
+    velopack.App().set_auto_apply_on_startup(False).run()
+
 import ctypes
 import json
 import os

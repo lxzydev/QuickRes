@@ -16,11 +16,13 @@ class _FakeClosingSlot:
 class _FakeEvents:
     def __init__(self):
         self.closing = _FakeClosingSlot()
+        self.resized = _FakeClosingSlot()
 
 
 class _FakeWindow:
     def __init__(self):
         self.events = _FakeEvents()
+        self.native = None
 
 
 def test_slow_guard_resolution_does_not_hang_close_handler(monkeypatch):
