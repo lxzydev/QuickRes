@@ -1,12 +1,23 @@
-# QuickRes
 <p align="center">
-  <img src="QuickRes.png" width="140" alt="QuickRes">
+  <img src="QuickRes.png" width="140" alt="QuickRes logo">
 </p>
-if youve been false banned read https://sites.google.com/view/quickresonline/home
+<h1 align="center">QuickRes</h1>
+<p align="center">A small Windows utility for switching resolutions with a click or a hotkey.</p>
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white" alt="Python 3.14"></a>
+  <img src="https://img.shields.io/badge/Platform-Windows-0078D4" alt="Windows">
+  <a href="https://github.com/lxzydev/QuickRes/actions/workflows/ci.yml"><img src="https://github.com/lxzydev/QuickRes/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/lxzydev/QuickRes/releases"><img src="https://img.shields.io/github/v/release/lxzydev/QuickRes?logo=github&label=Release" alt="Latest public release"></a>
+  <a href="https://discord.gg/46m74x3YMd"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white" alt="Join our Discord server"></a>
+</p>
 
-A tiny Windows tool for instantly switching your resolution with one click.
+Built with stretched resolutions for Valorant in mind, but it also works for general desktop resolution switching.
 
-Built with stretched resolutions for Valorant in mind, but it works for switching resolution on anything.
+[False-ban information](https://sites.google.com/view/quickresonline/home)
+
+## Community and bug reports
+
+Found a bug or need help? Join the [QuickRes Discord server](https://discord.gg/46m74x3YMd). Include your QuickRes version, Windows version, and the steps needed to reproduce the issue. Screenshots are welcome.
 
 ## Why use this over NVIDIA Control Panel?
 
