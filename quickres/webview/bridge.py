@@ -47,6 +47,11 @@ _EXTERNAL_URL_ALLOWED_HOSTS = {"quickres.online", "github.com"}
 # would silently accept/reject text the UI disagrees with.
 _RES_TEXT_RE = re.compile(r"^(\d{2,5})\s*[x, ]\s*(\d{2,5})$")
 
+_MAX_SAVED_RESOLUTION_PRESETS = 100
+# Serialize read-modify-write of the preset list across bridge threads (and
+# Api instances). config.update_config separately preserves unrelated settings.
+_resolution_presets_lock = threading.Lock()
+
 _FAQ_KEYS = [
     ("faq_q1", "faq_a1"),
     ("faq_q2", "faq_a2"),
@@ -77,7 +82,9 @@ def _ui_strings(lang: str | None = None) -> dict:
     """
     keys = [
         "quick_resolutions_label", "custom_resolution_label", "custom_res_placeholder",
-        "btn_apply", "hotkey_toggle_label", "native_label", "stretched_label",
+        "btn_apply", "btn_save_preset", "preset_save_note", "preset_saved",
+        "preset_already_exists", "preset_removed", "preset_remove_label", "preset_busy",
+        "hotkey_toggle_label", "native_label", "stretched_label",
         "btn_start_hotkey", "btn_stop_hotkey", "hotkey_state_stopped", "hotkey_state_running",
         "notice_title", "btn_faq", "btn_monitors", "btn_updates",
         "faq_window_title", "monitors_window_title", "btn_disable", "btn_enable",
@@ -155,6 +162,28 @@ def _coerce_wh(value):
         if parsed:
             return parsed
     raise ValueError(f"Invalid resolution: {value!r}")
+
+
+def _resolution_preset_key(value):
+    width, height = _coerce_wh(value)
+    if not (10 <= width <= 99999 and 10 <= height <= 99999):
+        raise ValueError(i18n.t("preset_invalid_dimensions"))
+    return f"{width}x{height}"
+
+
+def _saved_resolution_presets(value):
+    """Tolerate corrupt/old config entries without passing them to Win32."""
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if not isinstance(item, str) or not re.fullmatch(r"[1-9]\d{1,4}x[1-9]\d{1,4}", item):
+            continue
+        if item not in result:
+            result.append(item)
+        if len(result) == _MAX_SAVED_RESOLUTION_PRESETS:
+            break
+    return result
 
 
 def _outcome_to_dict(outcome) -> dict:
@@ -568,7 +597,7 @@ class Api:
 
     # -- Read-only / simple methods ------------------------------------------
 
-    def _resolution_state(self):
+    def _resolution_state(self, saved_presets=None):
         """Read the actual desktop mode and classify the quick presets.
 
         Kept in one helper because the panel needs the exact same snapshot at
@@ -576,13 +605,22 @@ class Api:
         """
         current = display.get_current_resolution()
         current_wh = current or (display.QUICK_LIST[0][1], display.QUICK_LIST[0][2])
+        if saved_presets is None:
+            saved_presets = _saved_resolution_presets(config.load_config().get("saved_resolution_presets"))
+        entries = [(label, width, height, False) for label, width, height in display.QUICK_LIST]
+        builtins = {(width, height) for _, width, height in display.QUICK_LIST}
+        for value in saved_presets:
+            width, height = _coerce_wh(value)
+            if (width, height) not in builtins:
+                entries.append((f"{width} x {height}", width, height, True))
         presets = [
             {
                 "label": label, "width": width, "height": height,
                 "kind": display.classify_resolution(width, height, *current_wh),
                 "aspect_ratio": display.aspect_ratio_label(width, height),
+                "custom": custom,
             }
-            for label, width, height in display.QUICK_LIST
+            for label, width, height, custom in entries
         ]
         return {
             "current_resolution": {"width": current[0], "height": current[1]} if current else None,
@@ -632,6 +670,44 @@ class Api:
         return self._resolution_state()
 
     @bridge_op()
+    def add_resolution_preset(self, value):
+        """Save a shortcut, not a driver mode; never change the display here."""
+        key = _resolution_preset_key(value)
+        failure = self._check_resolution_support(_coerce_wh(key))
+        if failure:
+            return failure
+        builtins = {f"{width}x{height}" for _, width, height in display.QUICK_LIST}
+        with _resolution_presets_lock:
+            saved = _saved_resolution_presets(config.load_config().get("saved_resolution_presets"))
+            added = key not in saved and key not in builtins
+            if added:
+                if len(saved) >= _MAX_SAVED_RESOLUTION_PRESETS:
+                    raise ValueError(i18n.t("preset_limit_reached", count=_MAX_SAVED_RESOLUTION_PRESETS))
+                saved.append(key)
+                config.update_config({"saved_resolution_presets": saved})
+            return {"ok": True, "added": added, **self._resolution_state(saved)}
+
+    @bridge_op()
+    def remove_resolution_preset(self, value):
+        """Remove only the shortcut; never alter a saved or running hotkey."""
+        key = _resolution_preset_key(value)
+        # Share the start/stop lock so deletion cannot race a new listener or
+        # discard a preset still needed by a failed-stop restoration retry.
+        with _LockAcquireGuard.non_blocking(self._hotkey_lock) as guard:
+            if not guard.acquired:
+                raise RuntimeError(i18n.t("preset_busy"))
+            toggle = self._hotkey_toggle
+            if toggle is not None and (self._hotkey_running or self._hotkey_restore_pending):
+                if _coerce_wh(key) in (toggle.native_res, toggle.stretched_res):
+                    raise RuntimeError(i18n.t("preset_in_use"))
+            with _resolution_presets_lock:
+                saved = _saved_resolution_presets(config.load_config().get("saved_resolution_presets"))
+                if key in saved:
+                    saved.remove(key)
+                    config.update_config({"saved_resolution_presets": saved})
+                return {"ok": True, **self._resolution_state(saved)}
+
+    @bridge_op()
     def set_theme(self, theme):
         if theme not in ("dark", "light"):
             raise ValueError(f"Unknown theme: {theme!r}")
@@ -674,16 +750,18 @@ class Api:
         webbrowser.open(url)
         return {"opened": url}
 
-    @bridge_op()
-    def pick_resolution(self, width, height):
-        # Reused verbatim by the panel's custom-resolution Apply
-        # button (parses "WxH" client-side, then calls this identically to a
-        # preset click) -- so a malformed pair reaching here from free text
-        # must be rejected before any Win32 call, not fall through to an
-        # "unsupported" vendor-dialog response.
-        width, height = _coerce_wh([width, height])
+    def _check_resolution_support(self, *resolutions):
+        """Fresh driver enumeration for Save, Apply and Start; never switch.
+
+        An empty enumeration is not evidence that a particular mode is
+        missing: the display may be disconnected or Windows mid-transition.
+        Fail without saving/starting and let the user retry in that case.
+        """
         supported = display.get_supported_resolutions()
-        if (width, height) not in supported:
+        if not supported:
+            raise RuntimeError(i18n.t("resolution_query_failed"))
+        missing = next((pair for pair in resolutions if pair not in supported), None)
+        if missing is not None:
             # display.detect_gpu_vendors() returns an EMPTY set (falsy, but
             # not None) on any failure -- a subprocess timeout, or
             # PowerShell/WMI not yet warmed up right after boot -- not only
@@ -699,7 +777,17 @@ class Api:
             if not self._gpu_vendors:
                 self._gpu_vendors = display.detect_gpu_vendors()
             vendors = sorted(self._gpu_vendors) if self._gpu_vendors else ["amd", "intel", "nvidia"]
-            return {"ok": False, "reason": "unsupported", "vendors": vendors}
+            return {"ok": False, "reason": "unsupported", "vendors": vendors,
+                    "width": missing[0], "height": missing[1]}
+        return None
+
+    @bridge_op()
+    def pick_resolution(self, width, height):
+        # Preset clicks and one-off custom Apply share validation and switching.
+        width, height = _coerce_wh([width, height])
+        failure = self._check_resolution_support((width, height))
+        if failure:
+            return failure
         ok, message = display.set_resolution(width, height)
         if not ok:
             # This is the identical underlying Win32
@@ -759,6 +847,9 @@ class Api:
                     "A hotkey is already running with a different "
                     "configuration -- call stop_hotkey first"
                 )
+            failure = self._check_resolution_support(native_wh, stretched_wh)
+            if failure:
+                return failure
             config.update_config({
                 "hotkey": key,
                 "native_res": f"{native_wh[0]}x{native_wh[1]}",

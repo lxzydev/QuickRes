@@ -172,6 +172,11 @@ select.qr-input{cursor:pointer}
 .qr-favorite{flex:none;width:30px;min-height:32px;background:var(--bg-alt);color:var(--fg-dim);border:1px solid var(--line-soft)}
 .qr-favorite[aria-pressed="true"]{color:var(--fg);border-color:var(--fg-dim)}
 .qr-favorite:hover{border-color:var(--fg)}
+.qr-remove-preset{flex:none;padding:0 7px;background:var(--bg-alt);color:var(--fg-dim);border:1px solid var(--line-soft)}
+.qr-remove-preset:hover{border-color:var(--fg);color:var(--fg)}
+.qr-custom-row{flex-wrap:wrap}
+.qr-custom-row .qr-input{flex:1 1 130px;min-width:0}
+.qr-custom-note{font-size:11px;color:var(--fg-dim);line-height:1.5;margin:8px 0 0}
 .qr-search-empty{color:var(--fg-dim);font-size:12px;margin:8px 0}
 .qr-hotkey .qr-section-toggle{margin-bottom:0}
 .qr-section-body .qr-hotkey-grid{margin-top:10px}
@@ -215,10 +220,13 @@ input:focus-visible,select:focus-visible{outline:2px solid var(--fg);outline-off
       <span class="qr-section-label" id="qr-str-custom-res">Custom resolution</span>
       <span class="qr-section-rule"></span>
     </button>
-    <div class="qr-section-body" id="qr-body-custom"><div class="qr-row">
-      <input type="text" class="qr-input" id="qr-custom-input" aria-labelledby="qr-str-custom-res" placeholder="e.g. 1440x1080">
+    <div class="qr-section-body" id="qr-body-custom"><div class="qr-row qr-custom-row">
+      <input type="text" class="qr-input" id="qr-custom-input" aria-labelledby="qr-str-custom-res" aria-describedby="qr-custom-note" placeholder="e.g. 1440x1080">
+      <button type="button" class="qr-btn-solid" id="qr-custom-save">Save preset</button>
       <button type="button" class="qr-btn-solid" id="qr-custom-apply">Apply</button>
-    </div></div>
+    </div>
+    <p class="qr-custom-note" id="qr-custom-note">Save a driver-supported resolution to Quick resolutions and both hotkey lists without switching.</p>
+    </div>
   </section>
   <section id="qr-sec-hotkey" class="qr-hotkey">
     <button type="button" class="qr-section-toggle" id="qr-toggle-hotkey" data-section="hotkey" aria-expanded="true" aria-controls="qr-body-hotkey">
@@ -306,6 +314,8 @@ const HOTKEY_POLL_MS = 5000;
 // game, Windows Settings, or another tool changed the resolution.
 let resolutionPollTimer = null;
 let resolutionPollInFlight = false;
+let presetMutationInFlight = false;
+let presetRevision = 0;
 const RESOLUTION_POLL_MS = 2000;
 const CALL_QUIET = {};
 
@@ -399,6 +409,8 @@ const STRING_TARGETS = {
   'qr-str-boot-error-title': 'boot_error_title',
   'qr-str-boot-error-text': 'boot_error_body',
   'qr-boot-retry': 'btn_retry',
+  'qr-custom-save': 'btn_save_preset',
+  'qr-custom-note': 'preset_save_note',
 };
 
 function renderStrings(state) {
@@ -500,8 +512,22 @@ function renderPresetCards(state) {
     favorite.title = uiText(state, 'Favorite ', 'В избранное: ') + resolution;
     item.appendChild(btn);
     item.appendChild(favorite);
+    let remove = null;
+    if (p.custom) {
+      remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'qr-remove-preset';
+      remove.dataset.removePreset = resolution;
+      remove.dataset.resolution = resolution;
+      remove.textContent = '×';
+      remove.title = (s.preset_remove_label || 'Remove saved preset') + ' ' + resolution;
+      remove.setAttribute('aria-label', remove.title);
+      item.appendChild(remove);
+    }
     presetList.appendChild(item);
-    if (resolution === focusKey) restoreFocus = focused.dataset.favorite ? favorite : btn;
+    if (resolution === focusKey) {
+      restoreFocus = focused.dataset.removePreset ? remove : (focused.dataset.favorite ? favorite : btn);
+    }
   });
   el('qr-search-empty').hidden = visible.length > 0;
   el('qr-search-empty').textContent = visible.length ? '' : uiText(state, 'No matching resolutions', 'Разрешения не найдены');
@@ -534,7 +560,8 @@ function renderResSection(state) {
   // no longer in QUICK_LIST (for example after a monitor change). Keep that
   // value selectable instead of rendering an empty select and silently
   // replacing the user's stored configuration.
-  [state.hotkey.native_res, state.hotkey.stretched_res].forEach(function (value) {
+  const draft = state.hotkeyDraft || state.hotkey;
+  [state.hotkey.native_res, state.hotkey.stretched_res].concat([draft.native_res, draft.stretched_res]).forEach(function (value) {
     if (!value || seen[value]) return;
     seen[value] = true;
     const optA = document.createElement('option');
@@ -684,18 +711,20 @@ function resolutionStateChanged(next) {
       || preset.width !== updated.width
       || preset.height !== updated.height
       || preset.kind !== updated.kind
-      || preset.aspect_ratio !== updated.aspect_ratio;
+      || preset.aspect_ratio !== updated.aspect_ratio
+      || !!preset.custom !== !!updated.custom;
   });
 }
 
 async function refreshResolutionState() {
-  if (resolutionPollInFlight || document.hidden || !window.pywebview) return;
+  if (resolutionPollInFlight || presetMutationInFlight || document.hidden || !window.pywebview) return;
   resolutionPollInFlight = true;
+  const revision = presetRevision;
   try {
     // Passive refreshes stay silent: a transient display-topology change
     // should never produce a toast every two seconds.
     const next = await call('get_resolution_state', CALL_QUIET);
-    if (!resolutionStateChanged(next)) return;
+    if (revision !== presetRevision || !resolutionStateChanged(next)) return;
     S.currentResolution = next.current_resolution;
     S.presets = next.presets;
     // Deliberately redraw only the cards. Re-rendering the whole resolution
@@ -1379,6 +1408,56 @@ function handlePickResolutionResult(d, width, height) {
   pushStatus('err', d.message || 'Unexpected failure');
 }
 
+function readCustomResolution() {
+  // Keep CUSTOM_RE identical to bridge.py's _RES_TEXT_RE (no /i flag).
+  const CUSTOM_RE = /^(\d{2,5})\s*[x, ]\s*(\d{2,5})$/;
+  const m = CUSTOM_RE.exec(el('qr-custom-input').value.trim());
+  if (!m) {
+    pushStatus('err', S.strings.custom_res_placeholder || 'e.g. 1440x1080');
+    return null;
+  }
+  return [parseInt(m[1], 10), parseInt(m[2], 10)];
+}
+
+function showResolutionValidationFailure(result) {
+  if (result.reason === 'unsupported') {
+    openVendorDialog(result.vendors, result.width, result.height);
+  } else {
+    pushStatus('err', result.message || 'Unexpected failure');
+  }
+}
+
+async function changeResolutionPreset(method, value) {
+  if (presetMutationInFlight) {
+    pushStatus('idle', S.strings.preset_busy || 'A preset or hotkey operation is in progress. Try again.');
+    return;
+  }
+  presetMutationInFlight = true;
+  presetRevision += 1; // Invalidate any pre-save background snapshot.
+  el('qr-custom-save').disabled = true;
+  try {
+    const next = await call(method, value);
+    if (!next) return; // call() already surfaced the write/validation error.
+    if (next.ok === false) { showResolutionValidationFailure(next); return; }
+    S.currentResolution = next.current_resolution;
+    S.presets = next.presets;
+    renderResSection(S);
+    renderHotkeySection(S); // Preserve edits and the active hotkey profile.
+    const s = S.strings;
+    if (method === 'add_resolution_preset') {
+      pushStatus('ok', next.added === false
+        ? (s.preset_already_exists || 'This resolution is already in the preset list.')
+        : (s.preset_saved || 'Preset saved. Select it in the hotkey lists.'));
+    } else {
+      pushStatus('ok', s.preset_removed || 'Preset removed. Existing hotkey settings are unchanged.');
+    }
+  } finally {
+    presetRevision += 1;
+    presetMutationInFlight = false;
+    el('qr-custom-save').disabled = false;
+  }
+}
+
 /* ==S7 EVENTS== */
 /* Shared by every click handler below: opens the clicked element's
    data-external URL via the bridge and reports whether it handled the
@@ -1448,6 +1527,18 @@ el('qr-panel').addEventListener('click', async function (e) {
     return;
   }
 
+  const removePreset = e.target.closest('[data-remove-preset]');
+  if (removePreset) {
+    await changeResolutionPreset('remove_resolution_preset', removePreset.dataset.removePreset);
+    return;
+  }
+
+  if (e.target.id === 'qr-custom-save') {
+    const resolution = readCustomResolution();
+    if (resolution) await changeResolutionPreset('add_resolution_preset', resolution);
+    return;
+  }
+
   if (e.target.id === 'qr-boot-retry') {
     await boot();
     return;
@@ -1463,20 +1554,9 @@ el('qr-panel').addEventListener('click', async function (e) {
   }
 
   if (e.target.id === 'qr-custom-apply') {
-    // No dedicated bridge method exists for the custom-resolution input, so
-    // parse the "WxH" text client-side and call the same pick_resolution a
-    // preset click uses, reusing its unsupported-resolution vendor dialog
-    // verbatim.
-    // Must be kept char-for-char in sync with bridge.py's _RES_TEXT_RE --
-    // bridge.py is the server-side source of truth that ultimately decides
-    // WxH validity (pick_resolution's _coerce_wh re-validates any string
-    // input), so a drift here would let the UI accept text the backend
-    // rejects (or vice versa). No /i flag: _RES_TEXT_RE has no
-    // re.IGNORECASE, so uppercase 'X' is intentionally NOT accepted.
-    const CUSTOM_RE = /^(\d{2,5})\s*[x, ]\s*(\d{2,5})$/;
-    const m = CUSTOM_RE.exec(el('qr-custom-input').value.trim());
-    if (!m) { pushStatus('err', S.strings.custom_res_placeholder || 'e.g. 1440x1080'); return; }
-    const width = parseInt(m[1], 10), height = parseInt(m[2], 10);
+    const resolution = readCustomResolution();
+    if (!resolution) return;
+    const [width, height] = resolution;
     const d = await call('pick_resolution', width, height);
     handlePickResolutionResult(d, width, height);
     return;
@@ -1489,6 +1569,7 @@ el('qr-panel').addEventListener('click', async function (e) {
       stretched_res: el('qr-hotkey-stretched').value,
     };
     const d = await call('start_hotkey', profile.key, profile.native_res, profile.stretched_res);
+    if (d && d.ok === false) { showResolutionValidationFailure(d); return; }
     if (d) {
       Object.assign(S.hotkey, profile, { running: d.running, restore_pending: false });
       S.hotkeyDraft = null;
