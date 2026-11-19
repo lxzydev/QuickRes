@@ -25,6 +25,8 @@ def _isolated_app_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "APP_DIR", str(tmp_path))
     monkeypatch.setattr(config, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(config, "PENDING_PATH", str(tmp_path / "pending_restore.json"))
+    monkeypatch.setattr("quickres.webview.bridge.display.get_supported_resolutions",
+                        lambda: {(1920, 1080), (1440, 1080), (2560, 1440), (1280, 1024)})
     yield
 
 

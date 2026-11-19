@@ -58,6 +58,16 @@ QuickRes can only switch to resolutions your GPU driver already knows about. If 
 
 Once it's added there, QuickRes will be able to switch to it. You can also enter any custom width x height directly in the app.
 
+To reuse a custom resolution with a hotkey:
+
+1. Expand **Custom resolution**, enter a width and height (e.g. `1728x1080`), and click **Save preset**.
+2. The saved preset appears in **Quick resolutions** and both **Native** and **Stretched** hotkey dropdowns, and remains available after restarting QuickRes.
+3. Choose the two resolutions and a key, then click **Start Hotkey**. Stop an existing hotkey before changing its profile.
+
+**Save preset** validates the mode against the driver's currently registered resolutions before saving; it never switches the display or creates a driver mode. Unsupported modes show the existing graphics-software guidance without being saved. **Apply** still switches once without saving. Both Apply and Start Hotkey recheck support, since available modes can change after saving.
+
+Duplicate presets are not added twice. Up to 100 custom presets can be saved. Remove a custom preset with its **×** button; built-in presets cannot be removed. Stop a hotkey using that preset (and resolve any pending restoration) before removing it. Removal only deletes the shortcut, not the saved hotkey profile: values still referenced by that profile remain selectable.
+
 More troubleshooting is in the in-app FAQ.
 
 ## License / usage
